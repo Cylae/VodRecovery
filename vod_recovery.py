@@ -35,7 +35,7 @@ logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 logging.getLogger('aiohttp').setLevel(logging.CRITICAL)
 
 
-CURRENT_VERSION = "1.5.11"
+CURRENT_VERSION = "1.5.12"
 SUPPORTED_FORMATS = [".mp4", ".mkv", ".mov", ".avi", ".ts"]
 RESOLUTIONS = ["chunked", "2160p60", "2160p30", "2160p20", "1440p60", "1440p30", "1440p20", "1080p60", "1080p30", "1080p20", "720p60", "720p30", "720p20", "480p60", "480p30", "360p60", "360p30", "160p60", "160p30"]
 
@@ -4383,36 +4383,56 @@ def get_vod_or_highlight_url(vod_id):
     response = requests.get(url, timeout=30)
     if response.status_code != 200:
         data = fetch_twitch_data(vod_id)
-        vod_data = data["data"]["video"]
 
-        if data is None or vod_data is None:
+        if data is None:
+            return None, None, None
+        
+        vod_data = data.get("data", {}).get("video")
+        if vod_data is None:
             return None, None, None
 
-        current_url = urlparse(vod_data["seekPreviewsURL"])
+        seek_url = vod_data.get("seekPreviewsURL")
+        if not seek_url:
+            return None, None, None
 
-        domain = current_url.netloc
-        paths = current_url.path.split("/")
-        vod_special_id = paths[paths.index([i for i in paths if "storyboards" in i][0]) - 1]
-        old_vods_date = datetime.strptime("2023-02-10", "%Y-%m-%d")
-        created_date = datetime.strptime(vod_data["createdAt"], "%Y-%m-%dT%H:%M:%SZ")
+        try:
+            current_url = urlparse(seek_url)
+            domain = current_url.netloc
+            paths = current_url.path.split("/")
+            
+            storyboards_segments = [i for i in paths if "storyboards" in i]
+            if not storyboards_segments:
+                return None, None, None
+            
+            storyboards_idx = paths.index(storyboards_segments[0])
+            vod_special_id = paths[storyboards_idx - 1]
+            
+            old_vods_date = datetime.strptime("2023-02-10", "%Y-%m-%d")
+            created_date = datetime.strptime(vod_data["createdAt"], "%Y-%m-%dT%H:%M:%SZ")
 
-        time_diff = (old_vods_date - created_date).total_seconds()
-        days_diff = time_diff / (60 * 60 * 24)
+            time_diff = (old_vods_date - created_date).total_seconds()
+            days_diff = time_diff / (60 * 60 * 24)
 
-        broadcast_type = vod_data["broadcastType"].lower()
+            broadcast_type = vod_data.get("broadcastType", "").lower()
 
-        url = None
-        if broadcast_type == "highlight":
-            url = f"https://{domain}/{vod_special_id}/chunked/highlight-{vod_id}.m3u8"
-        elif broadcast_type == "upload" and days_diff > 7:
-            url = f"https://{domain}/{vod_data['owner']['login']}/{vod_id}/{vod_special_id}/chunked/index-dvr.m3u8"
-        else:
-            url = f"https://{domain}/{vod_special_id}/chunked/index-dvr.m3u8"
+            url = None
+            if broadcast_type == "highlight":
+                url = f"https://{domain}/{vod_special_id}/chunked/highlight-{vod_id}.m3u8"
+            elif broadcast_type == "upload" and days_diff > 7:
+                owner_login = vod_data.get("owner", {}).get("login", "")
+                url = f"https://{domain}/{owner_login}/{vod_id}/{vod_special_id}/chunked/index-dvr.m3u8"
+            else:
+                url = f"https://{domain}/{vod_special_id}/chunked/index-dvr.m3u8"
 
-        if url is not None:
-            response = requests.get(url, timeout=30)
-            if response.status_code == 200:
-                return url, vod_data["title"], vod_data["createdAt"]
+            if url is not None:
+                response = requests.get(url, timeout=30)
+                if response.status_code == 200:
+                    return url, vod_data.get("title"), vod_data.get("createdAt")
+                elif response.status_code == 403:
+                    return None, None, None
+        except (ValueError, IndexError, KeyError) as e:
+            return None, None, None
+
     return response.url, None, None
 
 
@@ -4438,6 +4458,12 @@ def twitch_recover(link=None):
         format_datetime = None
 
     m3u8_url = return_supported_qualities(url)
+
+    if m3u8_url is None:
+        print("\n✖  Unable to find a playable quality! Try using one of the other websites.\n")
+        input("Press Enter to continue...")
+        return_to_main_menu()
+
     print(f"\n\033[92m\u2713 Found URL: {m3u8_url}\n\033[0m")
 
     m3u8_source = process_m3u8_configuration(m3u8_url, skip_check=True)
