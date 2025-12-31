@@ -1867,12 +1867,28 @@ async def get_vod_urls(streamer_name, video_id, start_timestamp):
 
     print("\nSearching for M3U8 URL...")
 
-    m3u8_link_list = [
-        f"{domain.strip()}{str(hashlib.sha1(f'{streamer_name}_{video_id}_{int(calculate_epoch_timestamp(start_timestamp, seconds))}'.encode('utf-8')).hexdigest())[:20]}_{streamer_name}_{video_id}_{int(calculate_epoch_timestamp(start_timestamp, seconds))}/{quality}/index-dvr.m3u8"
-        for seconds in range(-30, 60)
-        for domain in domains if domain.strip()
-        for quality in qualities
-    ]
+    try:
+        start_dt = datetime.strptime(start_timestamp, "%Y-%m-%d %H:%M:%S")
+        epoch_base = datetime(1970, 1, 1)
+
+        m3u8_link_list = []
+        for seconds in range(-30, 60):
+            dt_at_seconds = start_dt + timedelta(seconds=seconds)
+            epoch_timestamp = int((dt_at_seconds - epoch_base).total_seconds())
+
+            # Pre-calculate hash and suffix once per second
+            hash_base = f'{streamer_name}_{video_id}_{epoch_timestamp}'
+            hash_token = str(hashlib.sha1(hash_base.encode('utf-8')).hexdigest())[:20]
+            url_suffix = f"_{streamer_name}_{video_id}_{epoch_timestamp}"
+
+            for domain in domains:
+                stripped_domain = domain.strip()
+                if not stripped_domain:
+                    continue
+                for quality in qualities:
+                    m3u8_link_list.append(f"{stripped_domain}{hash_token}{url_suffix}/{quality}/index-dvr.m3u8")
+    except ValueError:
+        m3u8_link_list = []
 
     successful_url = None
     progress_printed = False
