@@ -21,6 +21,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from seleniumbase import SB
 import requests
+from requests.adapters import HTTPAdapter
 from packaging import version
 import ffmpeg_downloader as ffdl
 from tqdm import tqdm
@@ -58,6 +59,18 @@ class ReturnToMain(Exception):
                 
 def return_to_main_menu():
     raise ReturnToMain()
+
+
+def create_session_with_pool(pool_size, retries=3):
+    session = requests.Session()
+    adapter = HTTPAdapter(
+        pool_connections=pool_size,
+        pool_maxsize=pool_size,
+        max_retries=retries
+    )
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 def read_config_by_key(config_file, key):
@@ -3052,7 +3065,7 @@ def clip_recover(streamer, video_id, duration):
     print("Searching...")
     full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration)), clip_format)
 
-    request_session = requests.Session()
+    request_session = create_session_with_pool(100)
     max_retries = 3
 
     def check_url(url):
@@ -3253,7 +3266,7 @@ def bulk_clip_recovery():
     clip_format = print_clip_format_menu().split(" ")
     stream_info_dict = parse_clip_csv_file(csv_file_path)
 
-    request_session = requests.Session()
+    request_session = create_session_with_pool(100)
     max_retries = 3
 
     def check_url(url):
