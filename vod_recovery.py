@@ -1,4 +1,5 @@
 import argparse
+import functools
 import hashlib
 import json
 import csv
@@ -60,6 +61,17 @@ def return_to_main_menu():
     raise ReturnToMain()
 
 
+@functools.lru_cache(maxsize=None)
+def _load_config_data(config_path):
+    with open(config_path, "r", encoding="utf-8") as input_config_file:
+        return json.load(input_config_file)
+
+
+@functools.lru_cache(maxsize=32)
+def read_text_file_cached(text_file_path):
+    return read_text_file(text_file_path)
+
+
 def read_config_by_key(config_file, key):
     script_dir = os.path.dirname(os.path.realpath(__file__))
     config_path = os.path.join(script_dir, "config", f"{config_file}.json")
@@ -95,8 +107,13 @@ def read_config_by_key(config_file, key):
         except Exception:
             return None
 
-    with open(config_path, "r", encoding="utf-8") as input_config_file:
-        config = json.load(input_config_file)
+    try:
+        config = _load_config_data(config_path)
+    except Exception:
+        return None
+
+    if config is None:
+        return None
 
     return config.get(key, None)
 
@@ -1335,7 +1352,7 @@ def get_script_directory():
 
 def return_user_agent():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    user_agents = read_text_file(os.path.join(script_dir, "lib", "user_agents.txt"))
+    user_agents = read_text_file_cached(os.path.join(script_dir, "lib", "user_agents.txt"))
     header = {"user-agent": random.choice(user_agents)}
     return header
 
@@ -1457,6 +1474,8 @@ def set_default_video_format():
             with open(config_file_path, "w", encoding="utf-8") as config_file:
                 json.dump(config_data, config_file, indent=4)
 
+            _load_config_data.cache_clear()
+
             print(f"\n\033[92m\u2713  Default video format set to: {selected_format.lstrip('.')}\033[0m")
 
         except (FileNotFoundError, json.JSONDecodeError) as error:
@@ -1489,6 +1508,8 @@ def set_default_directory():
                 config_data["DEFAULT_DIRECTORY"] = file_path
                 with open(config_file_path, "w", encoding="utf-8") as config_file:
                     json.dump(config_data, config_file, indent=4)
+
+                _load_config_data.cache_clear()
 
                 print(f"\n\033[92m\u2713  Default directory set to: {file_path}\033[0m")
 
@@ -1527,6 +1548,8 @@ def set_default_directory():
                 with open(config_file_path, "w", encoding="utf-8") as config_file:
                     json.dump(config_data, config_file, indent=4)
 
+                _load_config_data.cache_clear()
+
                 print(f"\n\033[92m\u2713  Default directory set to: {file_path}\033[0m")
                 break
 
@@ -1557,6 +1580,8 @@ def set_default_downloader():
             config_data["DEFAULT_DOWNLOADER"] = selected_downloader
             with open(config_file_path, "w", encoding="utf-8") as config_file:
                 json.dump(config_data, config_file, indent=4)
+
+            _load_config_data.cache_clear()
 
             print(f"\n\033[92m\u2713  Default downloader set to: {selected_downloader}\033[0m")
 
@@ -1862,7 +1887,7 @@ async def fetch_status(session, url, retries=5, timeout=30):
 
 async def get_vod_urls(streamer_name, video_id, start_timestamp):
     script_dir = get_script_directory()
-    domains = read_text_file(os.path.join(script_dir, "lib", "domains.txt"))
+    domains = read_text_file_cached(os.path.join(script_dir, "lib", "domains.txt"))
     qualities = ["chunked", "1080p60"]
 
     print("\nSearching for M3U8 URL...")
@@ -4031,6 +4056,7 @@ def get_VLC_Location():
                     config_data["VLC_LOCATION"] = location
                     with open(config_file_path, "w", encoding="utf-8") as config_file:
                         json.dump(config_data, config_file, indent=4)
+                    _load_config_data.cache_clear()
                 except (FileNotFoundError, json.JSONDecodeError) as error:
                     print(f"Error: {error}")
                 return location
