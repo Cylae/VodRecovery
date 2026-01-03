@@ -29,6 +29,7 @@ import logging
 import importlib.metadata
 import tempfile
 import zipfile
+from functools import lru_cache
 
 
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
@@ -58,6 +59,23 @@ class ReturnToMain(Exception):
                 
 def return_to_main_menu():
     raise ReturnToMain()
+
+
+@lru_cache(maxsize=32)
+def read_static_text_file(text_file_path):
+    return read_text_file(text_file_path)
+
+
+def create_session_with_pool(pool_size=100, retries=3):
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(
+        pool_connections=pool_size,
+        pool_maxsize=pool_size,
+        max_retries=retries
+    )
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
 
 
 def read_config_by_key(config_file, key):
@@ -1335,7 +1353,7 @@ def get_script_directory():
 
 def return_user_agent():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    user_agents = read_text_file(os.path.join(script_dir, "lib", "user_agents.txt"))
+    user_agents = read_static_text_file(os.path.join(script_dir, "lib", "user_agents.txt"))
     header = {"user-agent": random.choice(user_agents)}
     return header
 
@@ -1862,7 +1880,7 @@ async def fetch_status(session, url, retries=5, timeout=30):
 
 async def get_vod_urls(streamer_name, video_id, start_timestamp):
     script_dir = get_script_directory()
-    domains = read_text_file(os.path.join(script_dir, "lib", "domains.txt"))
+    domains = read_static_text_file(os.path.join(script_dir, "lib", "domains.txt"))
     qualities = ["chunked", "1080p60"]
 
     print("\nSearching for M3U8 URL...")
@@ -3052,7 +3070,7 @@ def clip_recover(streamer, video_id, duration):
     print("Searching...")
     full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration)), clip_format)
 
-    request_session = requests.Session()
+    request_session = create_session_with_pool(pool_size=100)
     max_retries = 3
 
     def check_url(url):
@@ -3183,7 +3201,7 @@ def random_clip_recovery(video_id, hours, minutes):
     full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration)), clip_format)
     random.shuffle(full_url_list)
 
-    request_session = requests.Session()
+    request_session = create_session_with_pool(pool_size=100)
 
     def check_url(url):
         for _ in range(max_retries):
@@ -3253,7 +3271,7 @@ def bulk_clip_recovery():
     clip_format = print_clip_format_menu().split(" ")
     stream_info_dict = parse_clip_csv_file(csv_file_path)
 
-    request_session = requests.Session()
+    request_session = create_session_with_pool(pool_size=100)
     max_retries = 3
 
     def check_url(url):
