@@ -29,6 +29,7 @@ import logging
 import importlib.metadata
 import tempfile
 import zipfile
+from functools import lru_cache
 
 
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
@@ -1273,6 +1274,16 @@ def read_text_file(text_file_path):
     return lines
 
 
+@lru_cache(maxsize=None)
+def read_static_text_file(text_file_path):
+    """
+    Cached version of read_text_file for static assets (like user_agents.txt).
+    This prevents unnecessary repeated disk I/O for files that don't change during execution.
+    Returns a tuple to ensure immutability of the cached data.
+    """
+    return tuple(read_text_file(text_file_path))
+
+
 def write_text_file(input_text, destination_path):
     with open(destination_path, "a+", encoding="utf-8") as text_file:
         text_file.write(input_text + "\n")
@@ -1335,7 +1346,7 @@ def get_script_directory():
 
 def return_user_agent():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    user_agents = read_text_file(os.path.join(script_dir, "lib", "user_agents.txt"))
+    user_agents = read_static_text_file(os.path.join(script_dir, "lib", "user_agents.txt"))
     header = {"user-agent": random.choice(user_agents)}
     return header
 
@@ -1862,7 +1873,7 @@ async def fetch_status(session, url, retries=5, timeout=30):
 
 async def get_vod_urls(streamer_name, video_id, start_timestamp):
     script_dir = get_script_directory()
-    domains = read_text_file(os.path.join(script_dir, "lib", "domains.txt"))
+    domains = read_static_text_file(os.path.join(script_dir, "lib", "domains.txt"))
     qualities = ["chunked", "1080p60"]
 
     print("\nSearching for M3U8 URL...")
