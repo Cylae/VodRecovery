@@ -1835,6 +1835,47 @@ def get_all_clip_urls(clip_format_dict, clip_format_list):
     return combined_clip_format_list
 
 
+async def check_clip_url_async(session, url):
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            async with session.head(url, timeout=20) as response:
+                return url, response.status
+        except Exception:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5)
+    return url, None
+
+
+async def process_clip_urls_async(urls, on_clip_found=None):
+    valid_urls = []
+    iteration_counter = 0
+    valid_counter = 0
+
+    # Use a limit of 100 to match previous max_workers, but efficient
+    connector = aiohttp.TCPConnector(limit=100)
+    timeout = aiohttp.ClientTimeout(total=60, connect=10)
+
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        tasks = [check_clip_url_async(session, url) for url in urls]
+
+        for task in asyncio.as_completed(tasks):
+            iteration_counter += 1
+            url, status = await task
+
+            print(f"\rSearching for clips... {iteration_counter} of {len(urls)}", end=" ", flush=True)
+            if status == 200:
+                valid_counter += 1
+                valid_urls.append(url)
+                if on_clip_found:
+                    on_clip_found(url)
+                print(f"- {valid_counter} Clip(s) Found", end=" ")
+            else:
+                print(f"- {valid_counter} Clip(s) Found", end=" ")
+
+    return valid_urls
+
+
 async def fetch_status(session, url, retries=5, timeout=30):
     for attempt in range(retries):
         try:
@@ -3045,45 +3086,21 @@ def bulk_vod_recovery():
 
 
 def clip_recover(streamer, video_id, duration):
-    iteration_counter, valid_counter = 0, 0
     valid_url_list = []
 
     clip_format = print_clip_format_menu().split(" ")
     print("Searching...")
     full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration)), clip_format)
 
-    request_session = requests.Session()
-    max_retries = 3
+    def on_clip_found(url):
+        write_text_file(url, get_log_filepath(streamer, video_id))
 
-    def check_url(url):
-        for attempt in range(1, max_retries + 1):
-            try:
-                response = request_session.head(url, timeout=20)
-                return url, response.status_code
-            except Exception:
-                if attempt < max_retries:
-                    time.sleep(0.5)
-                else:
-                    return url, None
-
-    with ThreadPoolExecutor(max_workers=100) as executor:
-        future_to_url = {executor.submit(check_url, url): url for url in full_url_list}
-        for future in as_completed(future_to_url):
-            iteration_counter += 1
-            url, status = future.result()
-            print(f"\rSearching for clips... {iteration_counter} of {len(full_url_list)}", end=" ", flush=True)
-            if status == 200:
-                valid_counter += 1
-                valid_url_list.append(url)
-                print(f"- {valid_counter} Clip(s) Found", end=" ")
-            else:
-                print(f"- {valid_counter} Clip(s) Found", end=" ")
+    # Replaced ThreadPoolExecutor with asyncio/aiohttp for better performance
+    valid_url_list = asyncio.run(process_clip_urls_async(full_url_list, on_clip_found))
 
     print()
 
     if valid_url_list:
-        for url in valid_url_list:
-            write_text_file(url, get_log_filepath(streamer, video_id))
         if (read_config_by_key("settings", "AUTO_DOWNLOAD_CLIPS") or get_yes_no_choice("\nDo you want to download the recovered clips?")):
             download_clips(get_default_directory(), streamer, video_id)
         if read_config_by_key("settings", "REMOVE_LOG_FILE"):
@@ -3253,20 +3270,6 @@ def bulk_clip_recovery():
     clip_format = print_clip_format_menu().split(" ")
     stream_info_dict = parse_clip_csv_file(csv_file_path)
 
-    request_session = requests.Session()
-    max_retries = 3
-
-    def check_url(url):
-        for attempt in range(1, max_retries + 1):
-            try:
-                response = request_session.head(url, timeout=20)
-                return url, response.status_code
-            except Exception:
-                if attempt < max_retries:
-                    time.sleep(0.5)
-                else:
-                    return url, None
-
     should_download = read_config_by_key("settings", "AUTO_DOWNLOAD_CLIPS")
     if not should_download:
         should_download = get_yes_no_choice("Do you want to download all clips recovered?")
@@ -3281,7 +3284,6 @@ def bulk_clip_recovery():
 
     for video_id, values in stream_info_dict.items():
         vod_counter += 1
-        iteration_counter, valid_counter = 0, 0
         
         print(f"\nProcessing Past Broadcast:\n" 
               f"Stream Date: {values[0].replace('-', ' ')}\n" 
@@ -3291,22 +3293,15 @@ def bulk_clip_recovery():
         full_url_list = get_all_clip_urls(get_clip_format(video_id, values[1]), clip_format)
         print("Searching...")
 
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            future_to_url = {executor.submit(check_url, url): url for url in full_url_list}
-            for future in as_completed(future_to_url):
-                iteration_counter += 1
-                url, status = future.result()
-                print(f"\rSearching for clips... {iteration_counter} of {len(full_url_list)}", end=" ", flush=True)
-                if status == 200:
-                    valid_counter += 1
-                    write_text_file(url, get_log_filepath(streamer_name, video_id))
-                    print(f"- {valid_counter} Clip(s) Found", end=" ")
-                else:
-                    print(f"- {valid_counter} Clip(s) Found", end=" ")
+        def on_clip_found(url):
+            write_text_file(url, get_log_filepath(streamer_name, video_id))
 
-        print(f"\n\033[92m{valid_counter} Clip(s) Found\033[0m\n")
+        # Replaced ThreadPoolExecutor with asyncio/aiohttp for better performance
+        valid_urls = asyncio.run(process_clip_urls_async(full_url_list, on_clip_found))
 
-        if valid_counter != 0:
+        print(f"\n\033[92m{len(valid_urls)} Clip(s) Found\033[0m\n")
+
+        if len(valid_urls) != 0:
             if should_download:
                 download_clips(get_default_directory(), streamer_name, video_id)
                 os.remove(get_log_filepath(streamer_name, video_id))
