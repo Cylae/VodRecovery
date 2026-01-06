@@ -1655,16 +1655,18 @@ def extract_offset(clip_url):
     return clip_offset.group(1)
 
 
-def get_clip_format(video_id, offsets):
-    default_clip_list = [f"https://clips-media-assets2.twitch.tv/{video_id}-offset-{i}.mp4" for i in range(0, offsets, 2)]
-    alternate_clip_list = [f"https://clips-media-assets2.twitch.tv/vod-{video_id}-offset-{i}.mp4" for i in range(0, offsets, 2)]
-    legacy_clip_list = [f"https://clips-media-assets2.twitch.tv/{video_id}-index-{i:010}.mp4" for i in range(offsets)]
+def get_clip_format(video_id, offsets, clip_format_list=None):
+    clip_format_dict = {}
 
-    clip_format_dict = {
-        "1": default_clip_list,
-        "2": alternate_clip_list,
-        "3": legacy_clip_list,
-    }
+    if clip_format_list is None or "1" in clip_format_list:
+        clip_format_dict["1"] = [f"https://clips-media-assets2.twitch.tv/{video_id}-offset-{i}.mp4" for i in range(0, offsets, 2)]
+
+    if clip_format_list is None or "2" in clip_format_list:
+        clip_format_dict["2"] = [f"https://clips-media-assets2.twitch.tv/vod-{video_id}-offset-{i}.mp4" for i in range(0, offsets, 2)]
+
+    if clip_format_list is None or "3" in clip_format_list:
+        clip_format_dict["3"] = [f"https://clips-media-assets2.twitch.tv/{video_id}-index-{i:010}.mp4" for i in range(offsets)]
+
     return clip_format_dict
 
 
@@ -3050,7 +3052,7 @@ def clip_recover(streamer, video_id, duration):
 
     clip_format = print_clip_format_menu().split(" ")
     print("Searching...")
-    full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration)), clip_format)
+    full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration), clip_format), clip_format)
 
     request_session = requests.Session()
     max_retries = 3
@@ -3180,7 +3182,7 @@ def random_clip_recovery(video_id, hours, minutes):
 
     clip_format = print_clip_format_menu().split(" ")
     duration = calculate_broadcast_duration_in_minutes(hours, minutes)
-    full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration)), clip_format)
+    full_url_list = get_all_clip_urls(get_clip_format(video_id, calculate_max_clip_offset(duration), clip_format), clip_format)
     random.shuffle(full_url_list)
 
     request_session = requests.Session()
@@ -3288,7 +3290,7 @@ def bulk_clip_recovery():
               f"Vod ID: {video_id}\n" 
               f"Vod Number: {vod_counter} of {len(stream_info_dict)}\n")
         
-        full_url_list = get_all_clip_urls(get_clip_format(video_id, values[1]), clip_format)
+        full_url_list = get_all_clip_urls(get_clip_format(video_id, values[1], clip_format), clip_format)
         print("Searching...")
 
         with ThreadPoolExecutor(max_workers=100) as executor:
